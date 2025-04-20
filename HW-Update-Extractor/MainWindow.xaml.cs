@@ -1,17 +1,24 @@
-﻿using Microsoft.Win32;
-using System;
-using System.Collections.Generic;
-using System.IO;
+﻿using System.IO;
 using System.Windows;
-using System.Windows.Forms;
 using System.ComponentModel;
 
 namespace HW_Update_Extractor
 {
-
-    // Class for all partitions
-    public class Partition
+    public class Partition : INotifyPropertyChanged
     {
+        private bool _isSelected;
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected != value)
+                {
+                    _isSelected = value;
+                    OnPropertyChanged(nameof(IsSelected));
+                }
+            }
+        }
         public string Type { get; set; }
         public long Size { get; set; }
         public string Start { get; set; }
@@ -20,38 +27,49 @@ namespace HW_Update_Extractor
         public string Time { get; set; }
         public long DataOffset { get; set; }
         public string FilePath { get; set; }
+        public string SourceFileName => Path.GetFileName(FilePath);
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected virtual void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
     }
 
     public partial class MainWindow : Window
     {
-        // Constants
         private const uint MAGIC = 0xA55AAA55;
-        private const int CHUNK_SIZE = 0x400;
+        // private const int CHUNK_SIZE = 0x400;
         private const int ALIGNMENT = 4;
+
+        private List<string> loadedFilePaths = new List<string>();
         private List<Partition> partitions = new List<Partition>();
 
         public MainWindow()
         {
             InitializeComponent();
+            PartitionsListView.ItemsSource = partitions;
         }
+
+        // --- File/Directory Selection ---
 
         private void BrowseFile_Click(object sender, RoutedEventArgs e)
         {
-            // UPDATE.APP picker
             var openFileDialog = new Microsoft.Win32.OpenFileDialog
             {
-                Filter = "UPDATE.APP files|UPDATE.APP|All files|*.*"
+                Filter = "UPDATE.APP files|*.APP|All files|*.*",
+                Multiselect = true 
             };
 
             if (openFileDialog.ShowDialog() == true)
             {
-                FilePathTextBox.Text = openFileDialog.FileName;
+                LoadFiles(openFileDialog.FileNames);
             }
         }
 
         private void BrowseDirectory_Click(object sender, RoutedEventArgs e)
         {
-            // Output picker
             var folderDialog = new FolderBrowserDialog();
             if (folderDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
@@ -59,152 +77,297 @@ namespace HW_Update_Extractor
             }
         }
 
-        // Load UPDATE.APP to GUI
-        private void LoadUpdateApp_Click(object sender, RoutedEventArgs e)
+        // --- Drag and Drop Handling ---
+
+        private void Window_DragEnter(object sender, System.Windows.DragEventArgs e)
         {
-            if (string.IsNullOrEmpty(FilePathTextBox.Text))
+            if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
             {
-                System.Windows.MessageBox.Show("Please select an UPDATE.APP file first.");
+                e.Effects = System.Windows.DragDropEffects.Copy;
+            }
+            else
+            {
+                e.Effects = System.Windows.DragDropEffects.None;
+            }
+            e.Handled = true;
+        }
+
+        private void Window_Drop(object sender, System.Windows.DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            {
+                string[] files = (string[])e.Data.GetData(System.Windows.DataFormats.FileDrop);
+                LoadFiles(files);
+            }
+            e.Handled = true;
+        }
+
+        // --- Loading Logic ---
+
+        private void LoadFiles(IEnumerable<string> filePaths)
+        {
+            loadedFilePaths.Clear();
+            partitions.Clear();
+
+            loadedFilePaths.AddRange(filePaths);
+
+            if (!loadedFilePaths.Any())
+            {
+                FilePathTextBox.Text = "No files selected.";
+                PartitionsListView.Items.Refresh();
                 return;
             }
 
-            try
+            if (loadedFilePaths.Count == 1)
             {
-                ParsePartitions(FilePathTextBox.Text);
-                PartitionsListView.ItemsSource = partitions;
+                FilePathTextBox.Text = loadedFilePaths[0];
             }
-            catch (Exception ex)
+            else
             {
-                System.Windows.MessageBox.Show($"Error loading UPDATE.APP: {ex.Message}");
+                FilePathTextBox.Text = $"{loadedFilePaths.Count} files loaded.";
+            }
+
+            foreach (var filePath in loadedFilePaths)
+            {
+                try
+                {
+                    if (File.Exists(filePath))
+                    {
+                        ParsePartitions(filePath);
+                    }
+                    else if (Directory.Exists(filePath))
+                    {
+                        System.Windows.MessageBox.Show($"Skipping directory: {filePath}", "Skipped Item", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        System.Windows.MessageBox.Show($"File not found: {filePath}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                }
+                catch (IOException ioEx)
+                {
+                    System.Windows.MessageBox.Show($"Error accessing file '{Path.GetFileName(filePath)}': {ioEx.Message}", "File Access Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                catch (Exception ex)
+                {
+                    System.Windows.MessageBox.Show($"Error loading file '{Path.GetFileName(filePath)}': {ex.Message}", "Loading Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+
+            PartitionsListView.Items.Refresh();
+
+            if (!partitions.Any() && loadedFilePaths.Any())
+            {
+                System.Windows.MessageBox.Show("No valid partitions found in the selected file(s).", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
-        // Get partition data
+        // --- Partition Parsing ---
+
         private void ParsePartitions(string filePath)
         {
-            partitions.Clear();
-            using (var file = new BinaryReader(File.OpenRead(filePath)))
+            using (var file = new BinaryReader(File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read)))
             {
-                while (file.BaseStream.Position < file.BaseStream.Length)
+                long currentPosition = 0;
+                while (currentPosition < file.BaseStream.Length)
                 {
+                    file.BaseStream.Seek(currentPosition, SeekOrigin.Begin);
                     var buffer = new byte[4];
+
+                    if (file.BaseStream.Length - currentPosition < 4) break;
+
                     if (file.Read(buffer, 0, 4) != 4) break;
 
                     if (BitConverter.ToUInt32(buffer, 0) == MAGIC)
                     {
-                        var partition = ReadPartition(file, file.BaseStream.Position - 4, filePath);
+                        long headerStartPosition = currentPosition;
+                        var partition = ReadPartition(file, headerStartPosition, filePath);
                         if (partition != null)
                         {
                             partitions.Add(partition);
+                            currentPosition = file.BaseStream.Position;
                         }
+                        else
+                        {
+                            currentPosition += 4;
+                        }
+                    }
+                    else
+                    {
+                        currentPosition++;
                     }
                 }
             }
         }
 
-        // Process partition
         private Partition ReadPartition(BinaryReader file, long startPosition, string filePath)
         {
             try
             {
+                file.BaseStream.Seek(startPosition + 4, SeekOrigin.Begin);
+
+                if (file.BaseStream.Length - file.BaseStream.Position < (4 + 4 + 8 + 4 + 4 + 16 + 16 + 16))
+                    return null;
+
                 var headerSize = file.ReadUInt32();
                 var unknown1 = file.ReadUInt32();
                 var hardwareId = file.ReadUInt64();
                 var sequence = file.ReadUInt32();
-                var size = file.ReadUInt32();
+                var size = file.ReadUInt32(); 
 
                 var date = ReadNullTerminatedString(file, 16);
                 var time = ReadNullTerminatedString(file, 16);
-                var type = ReadNullTerminatedString(file, 16);
+                var type = ReadNullTerminatedString(file, 16).Trim(); 
 
-                var remainingHeaderSize = headerSize - 98;
-                file.BaseStream.Seek(remainingHeaderSize + 22, SeekOrigin.Current);
+                long currentHeaderRead = (file.BaseStream.Position - (startPosition + 4));
+                long remainingHeaderBytesToSkip = (long)headerSize - 4 - currentHeaderRead; 
 
-                long dataOffset = file.BaseStream.Position;
+                if (remainingHeaderBytesToSkip < 0) return null;
 
+                if (file.BaseStream.Length - file.BaseStream.Position < remainingHeaderBytesToSkip + size)
+                    return null; 
+
+                file.BaseStream.Seek(remainingHeaderBytesToSkip, SeekOrigin.Current);
+                long dataOffset = file.BaseStream.Position; 
                 file.BaseStream.Seek(size, SeekOrigin.Current);
 
                 var alignment = (ALIGNMENT - file.BaseStream.Position % ALIGNMENT) % ALIGNMENT;
+                if (file.BaseStream.Length - file.BaseStream.Position < alignment)
+                    return null;
+
                 file.BaseStream.Seek(alignment, SeekOrigin.Current);
 
                 return new Partition
                 {
-                    Type = type,
+                    IsSelected = true,
+                    Type = string.IsNullOrWhiteSpace(type) ? "UNKNOWN" : type,
                     Size = size,
-                    Start = $"0x{startPosition:X}",
-                    End = $"0x{file.BaseStream.Position:X}",
+                    Start = $"0x{dataOffset:X}", 
+                    End = $"0x{dataOffset + size:X}", 
                     Date = date,
                     Time = time,
                     DataOffset = dataOffset,
-                    FilePath = filePath
+                    FilePath = filePath 
                 };
             }
-            catch (Exception)
+            catch (EndOfStreamException)
+            {
+                return null;
+            }
+            catch (Exception ex) 
             {
                 return null;
             }
         }
 
-        // The function name says it lol
+
         private string ReadNullTerminatedString(BinaryReader reader, int maxLength)
         {
-            var bytes = reader.ReadBytes(maxLength);
-            var length = Array.IndexOf(bytes, (byte)0);
-            if (length < 0) length = maxLength;
-            return System.Text.Encoding.ASCII.GetString(bytes, 0, length);
+            var bytes = new List<byte>();
+            int count = 0;
+            byte b;
+            while (count < maxLength && (b = reader.ReadByte()) != 0)
+            {
+                bytes.Add(b);
+                count++;
+            }
+            if (count < maxLength)
+            {
+                reader.BaseStream.Seek(maxLength - 1 - count, SeekOrigin.Current);
+            }
+            return System.Text.Encoding.ASCII.GetString(bytes.ToArray());
         }
+
+        // --- Extraction Logic ---
 
         private void ExtractPartitions_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(OutputDirTextBox.Text))
             {
-                System.Windows.MessageBox.Show("Please select an output directory first.");
+                System.Windows.MessageBox.Show("Please select an output directory first.", "Output Directory Missing", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var selectedPartitions = partitions.Where(p => p.IsSelected).ToList();
+
+            if (!selectedPartitions.Any())
+            {
+                System.Windows.MessageBox.Show("No partitions selected for extraction.", "No Selection", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             try
             {
-                var outputDir = OutputDirTextBox.Text;
-                Directory.CreateDirectory(outputDir);
-                var filter = PartitionFilterTextBox.Text;
+                string baseOutputDir = OutputDirTextBox.Text;
+                int extractedCount = 0;
+                int errorCount = 0;
 
-                foreach (var partition in partitions)
+                foreach (var partition in selectedPartitions)
                 {
-                    if (string.IsNullOrEmpty(filter) || partition.Type == filter)
+                    try
                     {
-                        var outputPath = Path.Combine(outputDir, $"{partition.Type}.img");
+                        string sourceFileName = Path.GetFileName(partition.FilePath);
+                        string subDir = Path.Combine(baseOutputDir, sourceFileName);
+                        Directory.CreateDirectory(subDir);
+
+                        string safePartitionType = string.Join("_", partition.Type.Split(Path.GetInvalidFileNameChars())); 
+                        string outputPath = Path.Combine(subDir, $"{safePartitionType}.img");
+
                         ExtractPartitionToFile(partition, outputPath);
+                        extractedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error extracting partition '{partition.Type}' from '{partition.SourceFileName}': {ex.Message}");
+                        errorCount++;
                     }
                 }
 
-                System.Windows.MessageBox.Show("Partitions extracted successfully!");
+                string message = $"{extractedCount} partition(s) extracted successfully.";
+                if (errorCount > 0)
+                {
+                    message += $"\n{errorCount} partition(s) failed to extract.";
+                }
+                System.Windows.MessageBox.Show(message, "Extraction Complete", MessageBoxButton.OK, errorCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+
             }
             catch (Exception ex)
             {
-                System.Windows.MessageBox.Show($"Error extracting partitions: {ex.Message}");
+                System.Windows.MessageBox.Show($"Error during extraction process: {ex.Message}", "Extraction Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
-        // Export the partitions
         private void ExtractPartitionToFile(Partition partition, string outputPath)
         {
             const int bufferSize = 1024 * 1024;
-            using (var inputFile = new FileStream(partition.FilePath, FileMode.Open, FileAccess.Read))
-            using (var outputFile = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
+            byte[] buffer = new byte[bufferSize];
+
+            try
             {
-                inputFile.Seek(partition.DataOffset, SeekOrigin.Begin);
-                var remainingBytes = partition.Size;
-                var buffer = new byte[bufferSize];
-
-                while (remainingBytes > 0)
+                using (var inputFile = new FileStream(partition.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var outputFile = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
                 {
-                    var bytesToRead = (int)Math.Min(bufferSize, remainingBytes);
-                    var bytesRead = inputFile.Read(buffer, 0, bytesToRead);
-                    if (bytesRead == 0) break;
+                    inputFile.Seek(partition.DataOffset, SeekOrigin.Begin);
+                    long remainingBytes = partition.Size;
 
-                    outputFile.Write(buffer, 0, bytesRead);
-                    remainingBytes -= bytesRead;
+                    while (remainingBytes > 0)
+                    {
+                        int bytesToRead = (int)Math.Min(bufferSize, remainingBytes);
+                        int bytesRead = inputFile.Read(buffer, 0, bytesToRead);
+                        if (bytesRead == 0)
+                        {
+                            throw new EndOfStreamException($"Unexpected end of file '{Path.GetFileName(partition.FilePath)}' while reading partition '{partition.Type}'. Expected {partition.Size} bytes, read {partition.Size - remainingBytes}.");
+                        }
+
+
+                        outputFile.Write(buffer, 0, bytesRead);
+                        remainingBytes -= bytesRead;
+                    }
                 }
+            }
+            catch (IOException ioEx)
+            {
+                throw new IOException($"IO Error processing partition '{partition.Type}' from '{partition.SourceFileName}' to '{Path.GetFileName(outputPath)}': {ioEx.Message}", ioEx);
             }
         }
     }

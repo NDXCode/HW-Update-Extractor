@@ -5,11 +5,11 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:HW_Update_Extractor"
         mc:Ignorable="d"
-        Title="Update.APP Extractor" Height="500" Width="800" Background="#333333"
-        FontFamily="Segoe UI" FontSize="12">
+        Title="Update.APP Extractor v1.1" Height="500" Width="800" Background="#333333"
+        FontFamily="Segoe UI" FontSize="12"
+        AllowDrop="True" DragEnter="Window_DragEnter" Drop="Window_Drop">
     <Grid Margin="10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -21,44 +21,47 @@
             <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
 
-        <Label Content="Update.APP File:" Grid.Row="0" Grid.Column="0" 
+        <Label Content="Update.APP File(s):" Grid.Row="0" Grid.Column="0"
                Foreground="White" VerticalAlignment="Center" Margin="0,0,5,0"/>
-        <TextBox x:Name="FilePathTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,5,0" 
-                 IsReadOnly="True" Background="#555555" Foreground="White"/>
-        <Button Content="Browse" Grid.Row="0" Grid.Column="2" Click="BrowseFile_Click" 
+        <TextBox x:Name="FilePathTextBox" Grid.Row="0" Grid.Column="1" Margin="0,0,5,0"
+                 IsReadOnly="True" Background="#555555" Foreground="White" VerticalContentAlignment="Center"/>
+        <Button Content="Browse Files" Grid.Row="0" Grid.Column="2" Click="BrowseFile_Click"
                 Background="#444444" Foreground="White" Padding="5,2"/>
 
-        <Label Content="Output Directory:" Grid.Row="1" Grid.Column="0" 
+        <Label Content="Output Directory:" Grid.Row="1" Grid.Column="0"
                Foreground="White" VerticalAlignment="Center" Margin="0,10,5,0"/>
-        <TextBox x:Name="OutputDirTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,5,0" 
-                 IsReadOnly="True" Background="#555555" Foreground="White"/>
-        <Button Content="Browse" Grid.Row="1" Grid.Column="2" Margin="0,10,0,0" 
+        <TextBox x:Name="OutputDirTextBox" Grid.Row="1" Grid.Column="1" Margin="0,10,5,0"
+                 IsReadOnly="True" Background="#555555" Foreground="White" VerticalContentAlignment="Center"/>
+        <Button Content="Browse" Grid.Row="1" Grid.Column="2" Margin="0,10,0,0"
                 Click="BrowseDirectory_Click" Background="#444444" Foreground="White" Padding="5,2"/>
 
-        <Label Content="Partition Filter (optional):" Grid.Row="2" Grid.Column="0" 
-               Foreground="White" VerticalAlignment="Center" Margin="0,10,5,0"/>
-        <TextBox x:Name="PartitionFilterTextBox" Grid.Row="2" Grid.Column="1" Margin="0,10,5,0" 
-                 Background="#555555" Foreground="White"/>
 
-        <ListView x:Name="PartitionsListView" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" 
+        <ListView x:Name="PartitionsListView" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3"
                   Margin="0,10,0,10" Background="#444444" Foreground="White">
             <ListView.View>
                 <GridView>
+                    <GridViewColumn Header="Select" Width="60">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsSelected}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="Source File" DisplayMemberBinding="{Binding SourceFileName}" Width="150"/>
                     <GridViewColumn Header="Type" DisplayMemberBinding="{Binding Type}" Width="150"/>
                     <GridViewColumn Header="Size (bytes)" DisplayMemberBinding="{Binding Size}" Width="100"/>
                     <GridViewColumn Header="Start" DisplayMemberBinding="{Binding Start}" Width="100"/>
                     <GridViewColumn Header="End" DisplayMemberBinding="{Binding End}" Width="100"/>
-                    <GridViewColumn Header="Date" DisplayMemberBinding="{Binding Date}" Width="150"/>
-                    <GridViewColumn Header="Time" DisplayMemberBinding="{Binding Time}" Width="150"/>
+                    <GridViewColumn Header="Date" DisplayMemberBinding="{Binding Date}" Width="100"/>
+                    <GridViewColumn Header="Time" DisplayMemberBinding="{Binding Time}" Width="100"/>
                 </GridView>
             </ListView.View>
         </ListView>
-
-        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" 
+        <Label HorizontalAlignment="Left" Grid.Row="3" Grid.Column="0" VerticalAlignment="Bottom" Foreground="White" Content="Made by NDXCode" FontFamily="MV Boli" FontSize="16"/>
+        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal"
                     HorizontalAlignment="Right">
-            <Button Content="Load Update.APP" Click="LoadUpdateApp_Click" Margin="0,0,10,0" 
-                    Background="#444444" Foreground="White" Padding="8,4"/>
-            <Button Content="Extract Partitions" Click="ExtractPartitions_Click" 
+            
+            <Button Content="Extract" Click="ExtractPartitions_Click"
                     Background="#444444" Foreground="White" Padding="8,4"/>
         </StackPanel>
     </Grid>
